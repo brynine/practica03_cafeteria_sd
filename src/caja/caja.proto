@@ -1,0 +1,21 @@
+
+syntax = "proto3";
+
+package cafeteria;
+
+// Servicio encargado de registrar pagos simulados
+service CajaService {
+    rpc RegistrarPago (PagoSolicitud) returns (PagoRespuesta);
+}
+
+// Datos recibidos desde el servicio de pedidos
+message PagoSolicitud {
+    string pedido_id = 1;
+}
+
+// Resultado del registro del pago
+message PagoRespuesta {
+    string pago_id = 1;
+    string pedido_id = 2;
+    string estado = 3;
+}
