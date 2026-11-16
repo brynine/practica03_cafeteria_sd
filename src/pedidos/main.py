@@ -427,3 +427,54 @@ async def notificar_pedido_listo(pedido_id: str):
 
         except (WebSocketDisconnect, RuntimeError, OSError):
             conexiones_ws.get(pedido_id, set()).discard(cliente)
+
+
+@app.get("/admin/estadisticas")
+def obtener_estadisticas():
+
+    # Obtener una copia de los pedidos registrados
+    with candado:
+        lista_pedidos = [pedido.copy() for pedido in pedidos.values()]
+
+    # Solo considerar ventas con pago confirmado
+    ventas = [pedido for pedido in lista_pedidos if pedido.get("pago_id")]
+
+    # Contar los pedidos según su estado actual
+    pedidos_por_estado = {}
+
+    for pedido in lista_pedidos:
+        estado = pedido["estado"]
+
+        pedidos_por_estado[estado] = pedidos_por_estado.get(estado, 0) + 1
+
+    # Calcular unidades vendidas por producto
+    unidades_por_producto = {}
+
+    for pedido in ventas:
+        producto = pedido["producto"]
+        cantidad = pedido["cantidad"]
+
+        unidades_por_producto[producto] = (
+            unidades_por_producto.get(producto, 0) + cantidad
+        )
+
+    # Identificar el producto con más unidades vendidas
+    producto_mas_vendido = None
+
+    if unidades_por_producto:
+        producto_mas_vendido = max(unidades_por_producto, key=unidades_por_producto.get)
+
+    return {
+        "total_pedidos": len(lista_pedidos),
+        "ventas_confirmadas": len(ventas),
+        "unidades_vendidas": sum(pedido["cantidad"] for pedido in ventas),
+        "pedidos_facturados": sum(
+            1 for pedido in lista_pedidos if pedido.get("comprobante_id")
+        ),
+        "pedidos_listos": sum(
+            1 for pedido in lista_pedidos if pedido["estado"] == "LISTO"
+        ),
+        "pedidos_por_estado": pedidos_por_estado,
+        "unidades_por_producto": unidades_por_producto,
+        "producto_mas_vendido": producto_mas_vendido,
+    }
