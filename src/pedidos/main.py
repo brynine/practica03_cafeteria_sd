@@ -30,6 +30,13 @@ def mostrar_interfaz():
     return FileResponse(ruta_html)
 
 
+@app.get("/admin", include_in_schema=False)
+def mostrar_administracion():
+    ruta_html = Path(__file__).resolve().parents[1] / "web" / "admin.html"
+
+    return FileResponse(ruta_html)
+
+
 # Almacenamiento temporal en memoria
 pedidos = {}
 claves_idempotencia = {}
