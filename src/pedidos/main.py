@@ -2,7 +2,15 @@ from threading import Lock
 from uuid import uuid4
 
 import grpc
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    Header,
+    HTTPException,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from src.caja import caja_pb2, caja_pb2_grpc
@@ -15,6 +23,7 @@ app = FastAPI(title="Cafetería Universitaria - Pedidos")
 pedidos = {}
 claves_idempotencia = {}
 candado = Lock()
+conexiones_ws = {}
 
 
 class PedidoCrear(BaseModel):
@@ -296,7 +305,7 @@ def enviar_cocina(pedido_id: str):
 
 
 @app.post("/pedidos/{pedido_id}/marcar-listo")
-def marcar_pedido_listo(pedido_id: str):
+def marcar_pedido_listo(pedido_id: str, background_tasks: BackgroundTasks):
 
     with candado:
         pedido = pedidos.get(pedido_id)
@@ -338,6 +347,72 @@ def marcar_pedido_listo(pedido_id: str):
 
     with candado:
         pedido = pedidos[pedido_id]
-        pedido["estado"] = "LISTO"
 
-        return pedido.copy()
+        # Comprobar si es la primera confirmación
+        primera_confirmacion = pedido["estado"] != "LISTO"
+
+        pedido["estado"] = "LISTO"
+        resultado = pedido.copy()
+
+    # Notificar al estudiante después de actualizar el estado
+    if primera_confirmacion:
+        background_tasks.add_task(notificar_pedido_listo, pedido_id)
+
+    return resultado
+
+
+@app.websocket("/ws/pedidos/{pedido_id}")
+async def recibir_notificaciones(websocket: WebSocket, pedido_id: str):
+    with candado:
+        pedido = pedidos.get(pedido_id)
+        estado_actual = pedido["estado"] if pedido else None
+
+    if estado_actual is None:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+
+    # Registrar la conexión asociada al pedido
+    conexiones_ws.setdefault(pedido_id, set()).add(websocket)
+
+    try:
+        # Informar el estado actual al conectarse
+        await websocket.send_json(
+            {"tipo": "ESTADO_ACTUAL", "pedido_id": pedido_id, "estado": estado_actual}
+        )
+
+        # Mantener abierta la conexión
+        while True:
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+        print(f"Cliente desconectado del pedido: {pedido_id}")
+
+    finally:
+        # Liberar la conexión al desconectarse
+        conexiones_ws[pedido_id].discard(websocket)
+
+        if not conexiones_ws[pedido_id]:
+            del conexiones_ws[pedido_id]
+
+
+# Enviar notificaciones cuando un pedido esté listo
+async def notificar_pedido_listo(pedido_id: str):
+
+    mensaje = {
+        "tipo": "PEDIDO_LISTO",
+        "pedido_id": pedido_id,
+        "estado": "LISTO",
+        "mensaje": "Tu pedido está listo para retirar",
+    }
+
+    # Copiar la colección para recorrerla con seguridad
+    clientes = list(conexiones_ws.get(pedido_id, set()))
+
+    for cliente in clientes:
+        try:
+            await cliente.send_json(mensaje)
+
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            conexiones_ws.get(pedido_id, set()).discard(cliente)

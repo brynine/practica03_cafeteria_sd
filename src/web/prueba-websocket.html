@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Prueba WebSocket - Cafetería</title>
+  </head>
+  <body>
+    <h2>Notificaciones de la Cafetería</h2>
+
+    <label for="pedidoId">ID del pedido:</label>
+    <input type="text" id="pedidoId" size="40" />
+
+    <button onclick="conectar()">Conectar</button>
+
+    <p id="conexion">Sin conexión</p>
+    <h3>Mensajes recibidos:</h3>
+    <pre id="mensajes"></pre>
+
+    <script>
+      let socket = null;
+
+      function conectar() {
+        const pedidoId = document.getElementById("pedidoId").value.trim();
+
+        if (!pedidoId) {
+          alert("Introduce el ID del pedido");
+          return;
+        }
+
+        if (socket) {
+          socket.close();
+        }
+
+        socket = new WebSocket(`ws://127.0.0.1:8000/ws/pedidos/${pedidoId}`);
+
+        socket.onopen = () => {
+          document.getElementById("conexion").textContent =
+            "Conectado al pedido";
+        };
+
+        socket.onmessage = (evento) => {
+          const datos = JSON.parse(evento.data);
+
+          document.getElementById("mensajes").textContent +=
+            JSON.stringify(datos, null, 2) + "\n\n";
+
+          if (datos.tipo === "PEDIDO_LISTO") {
+            alert("Tu pedido está listo para retirar");
+          }
+        };
+
+        socket.onclose = () => {
+          document.getElementById("conexion").textContent = "Desconectado";
+        };
+      }
+    </script>
+  </body>
+</html>
