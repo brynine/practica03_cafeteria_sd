@@ -1,0 +1,30 @@
+
+syntax = "proto3";
+
+package cafeteria;
+
+service CocinaService {
+    rpc RecibirPedido (PedidoCocinaSolicitud)
+        returns (EstadoCocinaRespuesta);
+
+    rpc ConsultarEstado (PedidoIdSolicitud)
+        returns (EstadoCocinaRespuesta);
+
+    rpc MarcarListo (PedidoIdSolicitud)
+        returns (EstadoCocinaRespuesta);
+}
+
+message PedidoCocinaSolicitud {
+    string pedido_id = 1;
+    string producto = 2;
+    int32 cantidad = 3;
+}
+
+message PedidoIdSolicitud {
+    string pedido_id = 1;
+}
+
+message EstadoCocinaRespuesta {
+    string pedido_id = 1;
+    string estado = 2;
+}
