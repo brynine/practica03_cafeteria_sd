@@ -6,6 +6,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from src.caja import caja_pb2, caja_pb2_grpc
+from src.facturacion import facturacion_pb2, facturacion_pb2_grpc
 
 app = FastAPI(title="Cafetería Universitaria - Pedidos")
 
@@ -86,7 +87,7 @@ def pagar_pedido(pedido_id: str):
             raise HTTPException(status_code=404, detail="Pedido no encontrado")
 
         # Si ya fue pagado, no necesitamos repetir la operación
-        if pedido["estado"] == "PAGADO":
+        if pedido.get("pago_id"):
             return pedido.copy()
 
     try:
@@ -104,7 +105,7 @@ def pagar_pedido(pedido_id: str):
         with candado:
             pedido = pedidos[pedido_id]
 
-            if pedido["estado"] != "PAGADO":
+            if not pedido.get("pago_id"):
                 pedido["estado"] = "PAGO_PENDIENTE_VERIFICACION"
 
         raise HTTPException(
@@ -120,7 +121,7 @@ def pagar_pedido(pedido_id: str):
         with candado:
             pedido = pedidos[pedido_id]
 
-            if pedido["estado"] != "PAGADO":
+            if not pedido.get("pago_id"):
                 pedido["estado"] = "PAGO_PENDIENTE_VERIFICACION"
 
         raise HTTPException(
@@ -132,5 +133,89 @@ def pagar_pedido(pedido_id: str):
         pedido = pedidos[pedido_id]
         pedido["estado"] = "PAGADO"
         pedido["pago_id"] = respuesta.pago_id
+
+        return pedido.copy()
+
+
+@app.post("/pedidos/{pedido_id}/facturar")
+def facturar_pedido(pedido_id: str):
+
+    with candado:
+        pedido = pedidos.get(pedido_id)
+
+        if pedido is None:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        # No emitir nuevamente un comprobante existente
+        if pedido.get("comprobante_id"):
+            return pedido.copy()
+
+        if pedido["estado"] == "FACTURACION_EN_PROCESO":
+            raise HTTPException(
+                status_code=409, detail="La facturación ya está en proceso"
+            )
+
+        # Solo se pueden facturar pedidos pagados
+        if pedido["estado"] not in ("PAGADO", "FACTURACION_PENDIENTE_VERIFICACION"):
+            raise HTTPException(
+                status_code=409, detail="El pedido todavía no tiene un pago confirmado"
+            )
+
+        pago_id = pedido.get("pago_id")
+
+        if not pago_id:
+            raise HTTPException(
+                status_code=409, detail="El pedido no tiene un identificador de pago"
+            )
+
+        pedido["estado"] = "FACTURACION_EN_PROCESO"
+
+    try:
+        with grpc.insecure_channel("127.0.0.1:50052") as canal:
+
+            cliente = facturacion_pb2_grpc.FacturacionServiceStub(canal)
+
+            solicitud = facturacion_pb2.ComprobanteSolicitud(
+                pedido_id=pedido_id, pago_id=pago_id
+            )
+
+            respuesta = cliente.EmitirComprobante(solicitud, timeout=3)
+
+    except grpc.RpcError as error:
+
+        with candado:
+            pedido = pedidos[pedido_id]
+            pedido["estado"] = "FACTURACION_PENDIENTE_VERIFICACION"
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "mensaje": "No se pudo confirmar la facturación",
+                "pedido_id": pedido_id,
+                "codigo_grpc": error.code().name,
+            },
+        ) from error
+
+    # Comprobar los datos que devolvió Facturación
+    if (
+        respuesta.estado != "EMITIDO"
+        or respuesta.pedido_id != pedido_id
+        or respuesta.pago_id != pago_id
+        or not respuesta.comprobante_id
+    ):
+        with candado:
+            pedido = pedidos[pedido_id]
+            pedido["estado"] = "FACTURACION_PENDIENTE_VERIFICACION"
+
+        raise HTTPException(
+            status_code=502, detail="Facturación devolvió una respuesta no válida"
+        )
+
+    # Registrar el comprobante confirmado
+    with candado:
+        pedido = pedidos[pedido_id]
+
+        pedido["estado"] = "FACTURADO"
+        pedido["comprobante_id"] = respuesta.comprobante_id
 
         return pedido.copy()
