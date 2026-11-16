@@ -140,6 +140,34 @@
 
         <div id="notificacion" class="notificacion" hidden></div>
       </section>
+
+      <!-- Panel de operaciones para la demostración académica -->
+      <section class="tarjeta">
+        <h2>Gestión del pedido</h2>
+
+        <p>
+          Ejecuta las operaciones del pedido seleccionado siguiendo el orden del
+          proceso.
+        </p>
+
+        <button type="button" class="btn-operacion" data-accion="pagar">
+          Registrar pago
+        </button>
+
+        <button type="button" class="btn-operacion" data-accion="facturar">
+          Facturar
+        </button>
+
+        <button type="button" class="btn-operacion" data-accion="enviar-cocina">
+          Enviar a Cocina
+        </button>
+
+        <button type="button" class="btn-operacion" data-accion="marcar-listo">
+          Marcar listo
+        </button>
+
+        <p id="mensajeOperacion"></p>
+      </section>
     </div>
 
     <script>
@@ -298,6 +326,66 @@
         } catch (error) {
           alert("Error: " + error.message);
         }
+      });
+
+      // Integración de las operaciones REST desde la interfaz.
+      // Fragmento desarrollado con asistencia de IA.
+
+      const botonesOperacion = document.querySelectorAll(".btn-operacion");
+
+      const mensajeOperacion = document.getElementById("mensajeOperacion");
+
+      const accionesPermitidas = [
+        "pagar",
+        "facturar",
+        "enviar-cocina",
+        "marcar-listo",
+      ];
+
+      async function ejecutarOperacion(accion) {
+        const pedidoId = document.getElementById("pedidoId").value.trim();
+
+        if (!pedidoId) {
+          alert("Primero crea o consulta un pedido");
+          return;
+        }
+
+        if (!accionesPermitidas.includes(accion)) {
+          return;
+        }
+
+        botonesOperacion.forEach((boton) => {
+          boton.disabled = true;
+        });
+
+        mensajeOperacion.textContent = "Procesando solicitud...";
+
+        try {
+          const respuesta = await fetch(
+            `/pedidos/${encodeURIComponent(pedidoId)}/${accion}`,
+            {
+              method: "POST",
+            },
+          );
+
+          const pedido = await leerRespuesta(respuesta);
+
+          mostrarPedido(pedido);
+
+          mensajeOperacion.textContent = `Operación realizada. Estado: ${pedido.estado}`;
+        } catch (error) {
+          mensajeOperacion.textContent = `Error: ${error.message}`;
+        } finally {
+          botonesOperacion.forEach((boton) => {
+            boton.disabled = false;
+          });
+        }
+      }
+
+      botonesOperacion.forEach((boton) => {
+        boton.addEventListener("click", () => {
+          ejecutarOperacion(boton.dataset.accion);
+        });
       });
     </script>
   </body>
