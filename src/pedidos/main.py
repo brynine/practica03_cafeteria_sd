@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from src.caja import caja_pb2, caja_pb2_grpc
 from src.facturacion import facturacion_pb2, facturacion_pb2_grpc
+from src.cocina import cocina_pb2, cocina_pb2_grpc
 
 app = FastAPI(title="Cafetería Universitaria - Pedidos")
 
@@ -217,5 +218,126 @@ def facturar_pedido(pedido_id: str):
 
         pedido["estado"] = "FACTURADO"
         pedido["comprobante_id"] = respuesta.comprobante_id
+
+        return pedido.copy()
+
+
+@app.post("/pedidos/{pedido_id}/enviar-cocina")
+def enviar_cocina(pedido_id: str):
+
+    with candado:
+        pedido = pedidos.get(pedido_id)
+
+        if pedido is None:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        # Evitar enviar nuevamente pedidos ya procesados
+        if pedido["estado"] in ("EN_PREPARACION", "LISTO"):
+            return pedido.copy()
+
+        if pedido["estado"] == "ENVIO_COCINA_EN_PROCESO":
+            raise HTTPException(
+                status_code=409, detail="El envío a Cocina ya está en proceso"
+            )
+
+        # Cocina solamente recibe pedidos facturados
+        if pedido["estado"] not in ("FACTURADO", "COCINA_PENDIENTE_VERIFICACION"):
+            raise HTTPException(
+                status_code=409,
+                detail="El pedido debe estar facturado antes de enviarse a Cocina",
+            )
+
+        producto = pedido["producto"]
+        cantidad = pedido["cantidad"]
+        pedido["estado"] = "ENVIO_COCINA_EN_PROCESO"
+
+    try:
+        with grpc.insecure_channel("127.0.0.1:50053") as canal:
+
+            cliente = cocina_pb2_grpc.CocinaServiceStub(canal)
+
+            solicitud = cocina_pb2.PedidoCocinaSolicitud(
+                pedido_id=pedido_id, producto=producto, cantidad=cantidad
+            )
+
+            respuesta = cliente.RecibirPedido(solicitud, timeout=3)
+
+    except grpc.RpcError as error:
+        with candado:
+            pedido = pedidos[pedido_id]
+            pedido["estado"] = "COCINA_PENDIENTE_VERIFICACION"
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "mensaje": "No se pudo confirmar la recepción en Cocina",
+                "pedido_id": pedido_id,
+                "codigo_grpc": error.code().name,
+            },
+        ) from error
+
+    if respuesta.pedido_id != pedido_id or respuesta.estado not in (
+        "EN_PREPARACION",
+        "LISTO",
+    ):
+        with candado:
+            pedido = pedidos[pedido_id]
+            pedido["estado"] = "COCINA_PENDIENTE_VERIFICACION"
+
+        raise HTTPException(
+            status_code=502, detail="Cocina devolvió una respuesta no válida"
+        )
+
+    with candado:
+        pedido = pedidos[pedido_id]
+        pedido["estado"] = respuesta.estado
+
+        return pedido.copy()
+
+
+@app.post("/pedidos/{pedido_id}/marcar-listo")
+def marcar_pedido_listo(pedido_id: str):
+
+    with candado:
+        pedido = pedidos.get(pedido_id)
+
+        if pedido is None:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+        # Si ya está listo, devolver el estado actual
+        if pedido["estado"] == "LISTO":
+            return pedido.copy()
+
+        if pedido["estado"] != "EN_PREPARACION":
+            raise HTTPException(
+                status_code=409, detail="El pedido no está en preparación"
+            )
+
+    try:
+        with grpc.insecure_channel("127.0.0.1:50053") as canal:
+
+            cliente = cocina_pb2_grpc.CocinaServiceStub(canal)
+
+            solicitud = cocina_pb2.PedidoIdSolicitud(pedido_id=pedido_id)
+
+            respuesta = cliente.MarcarListo(solicitud, timeout=3)
+
+    except grpc.RpcError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "mensaje": "No se pudo confirmar el estado de Cocina",
+                "codigo_grpc": error.code().name,
+            },
+        ) from error
+
+    if respuesta.pedido_id != pedido_id or respuesta.estado != "LISTO":
+        raise HTTPException(
+            status_code=502, detail="Cocina devolvió una respuesta no válida"
+        )
+
+    with candado:
+        pedido = pedidos[pedido_id]
+        pedido["estado"] = "LISTO"
 
         return pedido.copy()
