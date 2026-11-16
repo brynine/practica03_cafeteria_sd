@@ -54,6 +54,7 @@ def verificar_salud():
     return {"estado": "activo"}
 
 
+# fragmento dado por la ia para controlar reintentos con Idempotency-Key.
 @app.post("/pedidos", status_code=201)
 def crear_pedido(
     datos: PedidoCrear,
@@ -104,6 +105,7 @@ def consultar_pedido(pedido_id: str):
         return pedido.copy()
 
 
+# fragmento dado por la ia para integración con Caja mediante gRPC y manejo de timeouts.
 # Nuevo endpoint: solicitar el pago mediante gRPC
 @app.post("/pedidos/{pedido_id}/pagar")
 def pagar_pedido(pedido_id: str):
@@ -379,6 +381,7 @@ def marcar_pedido_listo(pedido_id: str, background_tasks: BackgroundTasks):
     return resultado
 
 
+# fragmento dado por la ia para la gestión de conexiones y desconexiones WebSocket.
 @app.websocket("/ws/pedidos/{pedido_id}")
 async def recibir_notificaciones(websocket: WebSocket, pedido_id: str):
     with candado:
