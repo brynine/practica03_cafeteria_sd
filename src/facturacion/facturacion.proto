@@ -1,0 +1,21 @@
+
+syntax = "proto3";
+
+package cafeteria;
+
+service FacturacionService {
+    rpc EmitirComprobante (ComprobanteSolicitud)
+        returns (ComprobanteRespuesta);
+}
+
+message ComprobanteSolicitud {
+    string pedido_id = 1;
+    string pago_id = 2;
+}
+
+message ComprobanteRespuesta {
+    string comprobante_id = 1;
+    string pedido_id = 2;
+    string pago_id = 3;
+    string estado = 4;
+}
