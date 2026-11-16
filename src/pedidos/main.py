@@ -17,7 +17,18 @@ from src.caja import caja_pb2, caja_pb2_grpc
 from src.facturacion import facturacion_pb2, facturacion_pb2_grpc
 from src.cocina import cocina_pb2, cocina_pb2_grpc
 
+from pathlib import Path
+from fastapi.responses import FileResponse
+
 app = FastAPI(title="Cafetería Universitaria - Pedidos")
+
+
+@app.get("/app", include_in_schema=False)
+def mostrar_interfaz():
+    ruta_html = Path(__file__).resolve().parents[1] / "web" / "index.html"
+
+    return FileResponse(ruta_html)
+
 
 # Almacenamiento temporal en memoria
 pedidos = {}

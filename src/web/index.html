@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Cafetería Universitaria</title>
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        background: #f3f4f6;
+        color: #1f2937;
+        margin: 0;
+        padding: 30px 15px;
+      }
+
+      .contenedor {
+        max-width: 700px;
+        margin: auto;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+      }
+
+      .tarjeta {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px #00000012;
+      }
+
+      label {
+        display: block;
+        margin: 12px 0 6px;
+        font-weight: bold;
+      }
+
+      input {
+        width: 100%;
+        padding: 11px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+      }
+
+      button {
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 12px 18px;
+        margin-top: 15px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #1d4ed8;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .estado {
+        padding: 12px;
+        background: #eff6ff;
+        border-radius: 6px;
+        margin-top: 15px;
+      }
+
+      .notificacion {
+        padding: 15px;
+        background: #dcfce7;
+        color: #166534;
+        border-radius: 6px;
+        margin-top: 15px;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="contenedor">
+      <header>
+        <h1>Cafetería Universitaria</h1>
+        <p>Realiza tu pedido sin hacer fila</p>
+      </header>
+
+      <section class="tarjeta">
+        <h2>Nuevo pedido</h2>
+
+        <form id="formPedido">
+          <label for="producto">Producto</label>
+          <input
+            id="producto"
+            type="text"
+            placeholder="Ej. Hamburguesa"
+            required
+          />
+
+          <label for="cantidad">Cantidad</label>
+          <input id="cantidad" type="number" min="1" value="1" required />
+
+          <button id="btnCrear" type="submit">Crear pedido</button>
+        </form>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Consultar pedido</h2>
+
+        <label for="pedidoId">ID del pedido</label>
+        <input
+          id="pedidoId"
+          type="text"
+          placeholder="Ingresa tu identificador"
+        />
+
+        <button id="btnConsultar">Consultar estado</button>
+
+        <p id="conexion" class="estado">WebSocket sin conectar</p>
+
+        <h3>Información del pedido</h3>
+        <pre id="resultado">Sin pedido seleccionado</pre>
+
+        <div id="notificacion" class="notificacion" hidden></div>
+      </section>
+    </div>
+
+    <script>
+      const form = document.getElementById("formPedido");
+      const btnCrear = document.getElementById("btnCrear");
+      const btnConsultar = document.getElementById("btnConsultar");
+      const resultado = document.getElementById("resultado");
+      const conexion = document.getElementById("conexion");
+      const aviso = document.getElementById("notificacion");
+
+      let socket = null;
+      let pedidoConectado = null;
+      let clavePendiente = null;
+
+      function mostrarPedido(pedido) {
+        resultado.textContent = JSON.stringify(pedido, null, 2);
+      }
+
+      async function leerRespuesta(respuesta) {
+        const datos = await respuesta.json();
+
+        if (!respuesta.ok) {
+          const detalle =
+            typeof datos.detail === "string"
+              ? datos.detail
+              : JSON.stringify(datos.detail);
+
+          throw new Error(detalle || "Error en la API");
+        }
+
+        return datos;
+      }
+
+      async function obtenerPedido(id, conectar = true) {
+        const respuesta = await fetch(`/pedidos/${encodeURIComponent(id)}`);
+
+        const pedido = await leerRespuesta(respuesta);
+
+        mostrarPedido(pedido);
+
+        if (conectar) {
+          conectarWebSocket(id);
+        }
+
+        return pedido;
+      }
+
+      function conectarWebSocket(id) {
+        if (socket && pedidoConectado === id && socket.readyState <= 1) {
+          return;
+        }
+
+        if (socket) {
+          socket.close();
+        }
+
+        aviso.hidden = true;
+        pedidoConectado = id;
+
+        const protocolo = location.protocol === "https:" ? "wss" : "ws";
+
+        const actual = new WebSocket(
+          `${protocolo}://${location.host}/ws/pedidos/${encodeURIComponent(id)}`,
+        );
+
+        socket = actual;
+        conexion.textContent = "Conectando WebSocket...";
+
+        actual.onopen = () => {
+          if (socket !== actual) return;
+          conexion.textContent = "WebSocket conectado";
+        };
+
+        actual.onmessage = async (evento) => {
+          if (socket !== actual) return;
+
+          const mensaje = JSON.parse(evento.data);
+
+          if (mensaje.tipo === "PEDIDO_LISTO") {
+            aviso.textContent = mensaje.mensaje;
+            aviso.hidden = false;
+
+            try {
+              await obtenerPedido(id, false);
+            } catch (error) {
+              console.error(error);
+            }
+          }
+        };
+
+        actual.onclose = () => {
+          if (socket !== actual) return;
+          conexion.textContent = "WebSocket desconectado";
+        };
+
+        actual.onerror = () => {
+          if (socket !== actual) return;
+          conexion.textContent = "Error de conexión WebSocket";
+        };
+      }
+
+      form.addEventListener("submit", async (evento) => {
+        evento.preventDefault();
+
+        const producto = document.getElementById("producto").value.trim();
+
+        const cantidad = Number(document.getElementById("cantidad").value);
+
+        if (!producto || cantidad < 1) return;
+
+        // Conservar la clave si se necesita reintentar
+        if (!clavePendiente) {
+          clavePendiente = crypto.randomUUID();
+        }
+
+        btnCrear.disabled = true;
+
+        try {
+          const respuesta = await fetch("/pedidos", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": clavePendiente,
+            },
+            body: JSON.stringify({
+              producto,
+              cantidad,
+            }),
+          });
+
+          const pedido = await leerRespuesta(respuesta);
+
+          clavePendiente = null;
+
+          document.getElementById("pedidoId").value = pedido.pedido_id;
+
+          mostrarPedido(pedido);
+          conectarWebSocket(pedido.pedido_id);
+        } catch (error) {
+          alert("Error: " + error.message);
+        } finally {
+          btnCrear.disabled = false;
+        }
+      });
+
+      btnConsultar.addEventListener("click", async () => {
+        const id = document.getElementById("pedidoId").value.trim();
+
+        if (!id) {
+          alert("Ingresa un ID de pedido");
+          return;
+        }
+
+        try {
+          await obtenerPedido(id);
+        } catch (error) {
+          alert("Error: " + error.message);
+        }
+      });
+    </script>
+  </body>
+</html>
